@@ -20,11 +20,18 @@ class PromptEncoder(nn.Module):
 
     """Callable for text -> UMT5 embedding"""
     def __init__(self, model_id="google/umt5-xl", dtype=torch.bfloat16):
+        from pathlib import Path
         from transformers import AutoTokenizer, UMT5EncoderModel
         super().__init__()
         self.dtype = dtype
-        self.tok = AutoTokenizer.from_pretrained(model_id)
-        self.encoder = UMT5EncoderModel.from_pretrained(model_id, torch_dtype=dtype).eval()
+        # Support both local paths and HuggingFace repo IDs
+        path = Path(model_id)
+        if path.exists() and path.is_dir():
+            model_path = str(path)
+        else:
+            model_path = model_id
+        self.tok = AutoTokenizer.from_pretrained(model_path)
+        self.encoder = UMT5EncoderModel.from_pretrained(model_path, torch_dtype=dtype).eval()
 
     @torch.compile
     def encode(self, inputs):

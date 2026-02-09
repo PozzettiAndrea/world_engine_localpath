@@ -1,4 +1,5 @@
 from typing import Dict, Optional, Set, Tuple
+import time
 import torch
 from torch import Tensor
 from dataclasses import dataclass, field
@@ -7,6 +8,13 @@ from .model import WorldModel, StaticKVCache, PromptEncoder
 from .ae import InferenceAE
 from .patch_model import apply_inference_patches
 from .quantize import quantize_model
+
+
+def _log(msg: str):
+    """Print to stderr for visibility in subprocess."""
+    import os
+    import sys
+    os.write(sys.stderr.fileno(), f"{msg}\n".encode())
 
 
 # Global torch optimizations
@@ -37,25 +45,47 @@ class WorldEngine:
         model_uri: HF URI or local folder containing model.safetensors and config.yaml
         quant: None | w8a8 | nvfp4
         """
+        _init_start = time.perf_counter()
+        _log(f"[WorldEngine] Initializing...")
         self.device, self.dtype = device, dtype
 
+        _log(f"[WorldEngine] Loading config from {model_uri}")
+        t0 = time.perf_counter()
         self.model_cfg = WorldModel.load_config(model_uri)
+        _log(f"[WorldEngine] Config loaded in {time.perf_counter() - t0:.2f}s")
 
         if model_config_overrides:
             self.model_cfg.merge_with(model_config_overrides)
 
         # Model
+        _log(f"[WorldEngine] Loading VAE from {self.model_cfg.ae_uri}")
+        t0 = time.perf_counter()
         self.vae = InferenceAE.from_pretrained(self.model_cfg.ae_uri, device=device, dtype=dtype)
+        _log(f"[WorldEngine] VAE loaded in {time.perf_counter() - t0:.2f}s")
 
         self.prompt_encoder = None
         if self.model_cfg.prompt_conditioning is not None:
-            self.prompt_encoder = PromptEncoder("google/umt5-xl", dtype=dtype).to(device).eval()  # TODO: dont hardcode
+            text_encoder_uri = getattr(self.model_cfg, "text_encoder_uri", "google/umt5-xl")
+            _log(f"[WorldEngine] Loading PromptEncoder from {text_encoder_uri}")
+            t0 = time.perf_counter()
+            self.prompt_encoder = PromptEncoder(text_encoder_uri, dtype=dtype).to(device).eval()
+            _log(f"[WorldEngine] PromptEncoder loaded in {time.perf_counter() - t0:.2f}s")
 
+        _log(f"[WorldEngine] Loading WorldModel weights...")
+        t0 = time.perf_counter()
         self.model = WorldModel.from_pretrained(model_uri, cfg=self.model_cfg).to(device=device, dtype=dtype).eval()
+        _log(f"[WorldEngine] WorldModel loaded in {time.perf_counter() - t0:.2f}s")
+
+        _log("[WorldEngine] Applying inference patches...")
+        t0 = time.perf_counter()
         apply_inference_patches(self.model)
+        _log(f"[WorldEngine] Patches applied in {time.perf_counter() - t0:.2f}s")
 
         if quant is not None:
+            _log(f"[WorldEngine] Applying quantization: {quant}")
+            t0 = time.perf_counter()
             quantize_model(self.model, quant)
+            _log(f"[WorldEngine] Quantization applied in {time.perf_counter() - t0:.2f}s")
 
         # Inference Scheduler
         self.scheduler_sigmas = torch.tensor(self.model_cfg.scheduler_sigmas, device=device, dtype=dtype)
@@ -76,6 +106,8 @@ class WorldEngine:
         }
 
         self._prompt_ctx = {"prompt_emb": None, "prompt_pad_mask": None}
+
+        _log(f"[WorldEngine] Initialization complete in {time.perf_counter() - _init_start:.2f}s")
 
     @torch.inference_mode()
     def reset(self):
