@@ -48,25 +48,18 @@ def print_env_info():
         print("GPU:  none (CUDA not available)")
 
 
-def get_warm_engine(model_uri, model_overrides=None):
-    model_config_overrides = {"ae_uri": "OpenWorldLabs/owl_vae_f16_c16_distill_v0_nogan"}
-    model_config_overrides.update(model_overrides or {})
+@pytest.fixture(scope="session")
+def engine(model_uri="Overworld/Waypoint-1-Small"):
     engine = WorldEngine(
         model_uri,
-        model_config_overrides=model_config_overrides,
-        device="cuda",
-        load_weights=False
+        model_config_overrides={"ae_uri": "OpenWorldLabs/owl_vae_f16_c16_distill_v0_nogan"},
+        device="cuda"
     )
 
     # global warmup
     for _ in range(3):
         engine.gen_frame()
     return engine
-
-
-@pytest.fixture(scope="session")
-def engine(model_uri="Overworld/Waypoint-1-Small"):
-    return get_warm_engine(model_uri)
 
 
 @pytest.fixture(scope="session")
@@ -83,18 +76,9 @@ def test_img_decoder_only(benchmark, engine, last_latent):
     benchmark(run)
 
 
-MODEL_OVERRIDES = [None]
-
-
 @pytest.mark.parametrize("dit_only", [True])
-@pytest.mark.parametrize("n_frames", [256])
-@pytest.mark.parametrize(
-    "model_overrides", MODEL_OVERRIDES,
-    ids=lambda d: (",".join(f"{k}={v}" for k, v in d.items()) or "") if d else ""
-)
-def test_ar_rollout(benchmark, dit_only, n_frames, model_overrides):
-    engine = get_warm_engine("Overworld/Waypoint-1-Small", model_overrides=model_overrides)
-
+@pytest.mark.parametrize("n_frames", [1, 4, 16, 64, 256])
+def test_ar_rollout(benchmark, engine, dit_only, n_frames):
     def setup():
         engine.reset()
         engine.gen_frame(return_img=not dit_only)

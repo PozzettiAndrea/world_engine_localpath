@@ -32,7 +32,6 @@ class WorldEngine:
         model_config_overrides: Optional[Dict] = None,
         device=None,
         dtype=torch.bfloat16,
-        load_weights: bool = True
     ):
         """
         model_uri: HF URI or local folder containing model.safetensors and config.yaml
@@ -54,12 +53,7 @@ class WorldEngine:
             pe_uri = getattr(self.model_cfg, "prompt_encoder_uri", "google/umt5-xl")
             self.prompt_encoder = PromptEncoder(pe_uri, dtype=dtype).to(device).eval()
 
-        if load_weights:
-            self.model = WorldModel.from_pretrained(model_uri, cfg=self.model_cfg)
-        else:
-            self.model = WorldModel(self.model_cfg)
-        self.model = self.model.to(device=device, dtype=dtype).eval()
-
+        self.model = WorldModel.from_pretrained(model_uri, cfg=self.model_cfg).to(device=device, dtype=dtype).eval()
         apply_inference_patches(self.model)
 
         if quant is not None:
